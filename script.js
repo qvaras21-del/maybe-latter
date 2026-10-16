@@ -30,6 +30,15 @@
   let introShown = false, outroShown = false;
   const pointer = { x: 0, y: 0, active: false };
 
+  // Декор: сердечки, падающие звёзды, боке, свечение вокруг фото
+  const hearts = [];
+  const shooters = [];
+  let orbs = [];
+  let halo = null;
+  const HALO_PAD = 80;
+  let heartTimer = 0, shooterTimer = 3, burstSpawned = false;
+  let lastNow = 0;
+
   // ===== Утилиты =====
   const clamp = (v, a = 0, b = 1) => Math.min(b, Math.max(a, v));
   const lerp = (a, b, t) => a + (b - a) * t;
@@ -53,6 +62,129 @@
       const a = x * x + y * y - 1;
       if (a * a * a - x * x * y * y * y <= 0) return [x * 0.82, -y * 0.82 - 0.05];
     }
+  }
+
+  // ===== Декор =====
+  function heartPath(x, y, s) {
+    ctx.beginPath();
+    ctx.moveTo(x, y + s * 0.4);
+    ctx.bezierCurveTo(x - s * 0.9, y - s * 0.1, x - s * 0.5, y - s * 0.9, x, y - s * 0.35);
+    ctx.bezierCurveTo(x + s * 0.5, y - s * 0.9, x + s * 0.9, y - s * 0.1, x, y + s * 0.4);
+    ctx.closePath();
+  }
+
+  function spawnHeart(x, y, vx, vy, size, life, drag) {
+    const pink = Math.random() < 0.6;
+    hearts.push({
+      x, y, vx, vy, size, life, drag, age: 0,
+      ph: Math.random() * Math.PI * 2,
+      rgb: pink ? [249, 168, 212] : [147, 197, 253]
+    });
+    if (hearts.length > 160) hearts.shift();
+  }
+
+  function spawnHeartBurst(x, y, n) {
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 70 + Math.random() * 170;
+      spawnHeart(x, y, Math.cos(a) * sp, Math.sin(a) * sp - 40, 6 + Math.random() * 11, 1.8 + Math.random() * 1.4, true);
+    }
+  }
+
+  function updateHearts(dt) {
+    for (let i = hearts.length - 1; i >= 0; i--) {
+      const h = hearts[i];
+      h.age += dt;
+      if (h.age >= h.life) { hearts.splice(i, 1); continue; }
+      if (h.drag) {
+        const d = Math.pow(0.15, dt);
+        h.vx *= d; h.vy *= d; h.vy -= 22 * dt;
+      }
+      h.x += (h.vx + Math.sin(h.age * 2 + h.ph) * 12) * dt;
+      h.y += h.vy * dt;
+    }
+  }
+
+  function drawHearts() {
+    for (let i = 0; i < hearts.length; i++) {
+      const h = hearts[i];
+      const u = h.age / h.life;
+      const al = Math.min(1, u * 6) * (1 - u) * 0.75;
+      ctx.fillStyle = `rgba(${h.rgb[0]},${h.rgb[1]},${h.rgb[2]},${al})`;
+      heartPath(h.x, h.y, h.size * (0.6 + 0.4 * Math.min(1, u * 5)));
+      ctx.fill();
+    }
+  }
+
+  function spawnShooter() {
+    const ang = Math.PI * (0.78 + Math.random() * 0.08); // летит влево-вниз
+    const sp = 520 + Math.random() * 300;
+    shooters.push({
+      x: W * (0.4 + Math.random() * 0.6), y: Math.random() * H * 0.35,
+      vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp,
+      age: 0, life: 0.9
+    });
+  }
+
+  function drawShooters(dt) {
+    ctx.lineCap = 'round';
+    for (let i = shooters.length - 1; i >= 0; i--) {
+      const s = shooters[i];
+      s.age += dt;
+      if (s.age >= s.life) { shooters.splice(i, 1); continue; }
+      s.x += s.vx * dt; s.y += s.vy * dt;
+      const al = 1 - s.age / s.life;
+      const tx = s.x - s.vx * 0.16, ty = s.y - s.vy * 0.16;
+      const g = ctx.createLinearGradient(s.x, s.y, tx, ty);
+      g.addColorStop(0, `rgba(255,255,255,${al})`);
+      g.addColorStop(1, 'rgba(147,197,253,0)');
+      ctx.strokeStyle = g;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      ctx.lineTo(tx, ty);
+      ctx.stroke();
+    }
+  }
+
+  // Мягкое голубое свечение вокруг фото (рисуем один раз, потом просто копируем)
+  function buildHalo() {
+    const w = photoRect.w, h = photoRect.h, pad = HALO_PAD;
+    const c = document.createElement('canvas');
+    c.width = Math.ceil((w + pad * 2) * DPR);
+    c.height = Math.ceil((h + pad * 2) * DPR);
+    const g = c.getContext('2d');
+    g.scale(DPR, DPR);
+    const OFF = 5000; // рисуем прямоугольник далеко, а на холсте остаётся только его тень
+    g.shadowColor = 'rgba(96,165,250,0.75)';
+    g.shadowBlur = 45 * DPR;
+    g.shadowOffsetX = OFF * DPR;
+    g.fillStyle = '#000';
+    g.fillRect(pad - OFF, pad, w, h);
+    halo = c;
+  }
+
+  // Подпись появляется по буквам
+  function splitCaption() {
+    const caption = outro.querySelector('.caption');
+    if (!caption || caption.dataset.split) return;
+    caption.dataset.split = '1';
+    const text = caption.textContent.trim();
+    caption.textContent = '';
+    let n = 0;
+    const words = text.split(/\s+/);
+    words.forEach((word, wi) => {
+      const w = document.createElement('span');
+      w.className = 'w';
+      for (const ch of word) {
+        const s = document.createElement('span');
+        s.textContent = ch;
+        s.style.transitionDelay = (0.6 + n++ * 0.05) + 's';
+        w.appendChild(s);
+      }
+      caption.appendChild(w);
+      if (wi < words.length - 1) caption.appendChild(document.createTextNode(' '));
+    });
   }
 
   // ===== Загрузка фото =====
@@ -189,6 +321,7 @@
       p.tx = textPts[i].x;
       p.ty = textPts[i].y;
       p.td = clamp(textPts[i].nx * 0.88 + Math.random() * 0.12); // «пишется» слева направо
+      p.glint = Math.random() < 0.12; // часть букв будет искриться
     }
 
     // Точки разлёта — от того места, где частица была в момент взрыва
@@ -213,6 +346,22 @@
         vy: 2 + Math.random() * 6
       });
     }
+
+    // Большие мягкие огни (боке) на фоне
+    const orbColors = ['96,165,250', '244,114,182', '99,102,241', '147,197,253'];
+    orbs = [];
+    for (let i = 0; i < 7; i++) {
+      orbs.push({
+        x: Math.random() * W, y: Math.random() * H,
+        r: Math.min(W, H) * (0.14 + Math.random() * 0.22),
+        ph: Math.random() * Math.PI * 2,
+        sp: 0.12 + Math.random() * 0.2,
+        rgb: orbColors[i % orbColors.length],
+        a: 0.022 + Math.random() * 0.02
+      });
+    }
+
+    buildHalo();
   }
 
   // ===== Пульс сердца (двойной удар) =====
@@ -320,6 +469,8 @@
   const o = { x: 0, y: 0, rgb: null, a: 1, size: 1 };
 
   function frame(now) {
+    const dt = Math.min(0.05, Math.max(0, (now - lastNow) / 1000));
+    lastNow = now;
     const t = reduceMotion ? T_FADE + 3 : (now - startTime) / 1000;
     const settled = t > T_GATHER + 0.5;
 
@@ -348,6 +499,45 @@
       const al = 0.12 + 0.28 * (0.5 + 0.5 * Math.sin(t * s.sp + s.ph));
       ctx.fillStyle = `rgba(191,219,254,${al})`;
       ctx.fillRect(s.x, y, s.r, s.r);
+    }
+
+    if (!reduceMotion) {
+      // Большие мягкие огни (боке)
+      for (let i = 0; i < orbs.length; i++) {
+        const b = orbs[i];
+        const bx = b.x + Math.sin(t * b.sp + b.ph) * 50;
+        const by = b.y + Math.cos(t * b.sp * 0.8 + b.ph) * 40;
+        const g = ctx.createRadialGradient(bx, by, 0, bx, by, b.r);
+        g.addColorStop(0, `rgba(${b.rgb},${b.a})`);
+        g.addColorStop(1, `rgba(${b.rgb},0)`);
+        ctx.fillStyle = g;
+        ctx.fillRect(bx - b.r, by - b.r, b.r * 2, b.r * 2);
+      }
+
+      // Сердечки плывут снизу вверх, пока сердце бьётся и после превращения
+      heartTimer -= dt;
+      if (heartTimer <= 0) {
+        if ((t > T_FORM + 0.5 && t < T_BURST) || t > T_GATHER) {
+          const vy = -(32 + Math.random() * 40);
+          spawnHeart(Math.random() * W, H + 20, 0, vy, 6 + Math.random() * 11, (H + 40) / -vy, false);
+        }
+        heartTimer = t < T_BURST ? 0.35 : 0.6;
+      }
+      // Взрыв сердечек в момент распада
+      if (t >= T_BURST && !burstSpawned) {
+        burstSpawned = true;
+        spawnHeartBurst(cx, cy, 26);
+      }
+      updateHearts(dt);
+      drawHearts();
+
+      // Падающие звёзды
+      shooterTimer -= dt;
+      if (shooterTimer <= 0) {
+        spawnShooter();
+        shooterTimer = 4 + Math.random() * 5;
+      }
+      drawShooters(dt);
     }
 
     // Кольцо пульса с каждым ударом сердца
@@ -381,15 +571,56 @@
       place(p, t, o);
       ctx.fillStyle = `rgba(${o.rgb[0] | 0},${o.rgb[1] | 0},${o.rgb[2] | 0},${o.a})`;
       ctx.fillRect(o.x - o.size / 2, o.y - o.size / 2, o.size, o.size);
+
+      // Искорки-блики на буквах «I love you»
+      if (p.glint && t < T_BURST && t > T_TEXT + p.td * TEXT_SPREAD + TEXT_PART) {
+        const g = Math.pow(Math.max(0, Math.sin(t * 2.1 + p.phase * 3)), 14);
+        if (g > 0.08) {
+          const L = 5 + 12 * g;
+          ctx.fillStyle = `rgba(255,245,250,${g * 0.9})`;
+          ctx.fillRect(o.x - L, o.y - 0.6, L * 2, 1.2);
+          ctx.fillRect(o.x - 0.6, o.y - L, 1.2, L * 2);
+        }
+      }
     }
 
     // Настоящее фото плавно проявляется поверх частиц — эффект реальности
     if (photo && t > T_GATHER) {
       const k = easeInOut(clamp((t - T_GATHER) / (T_FADE - T_GATHER)));
       ctx.globalCompositeOperation = 'source-over';
+
+      // Мягкое свечение вокруг фото, слегка «дышит»
+      if (halo) {
+        ctx.globalAlpha = k * (reduceMotion ? 0.8 : 0.75 + 0.2 * Math.sin(t * 1.5));
+        ctx.drawImage(halo, photoRect.x - HALO_PAD, photoRect.y - HALO_PAD,
+          photoRect.w + HALO_PAD * 2, photoRect.h + HALO_PAD * 2);
+      }
+
       ctx.globalAlpha = k;
       ctx.drawImage(photo, photoRect.x, photoRect.y, photoRect.w, photoRect.h);
       ctx.globalAlpha = 1;
+
+      // Блик света, который время от времени скользит по фото
+      if (t > T_FADE && !reduceMotion) {
+        const ps = ((t - T_FADE) % 7) / 1.8;
+        if (ps < 1) {
+          const pr = photoRect;
+          const bw = pr.w * 0.22;
+          const bx = pr.x - bw + ps * (pr.w + bw * 2);
+          const g = ctx.createLinearGradient(bx - bw, 0, bx + bw, 0);
+          g.addColorStop(0, 'rgba(255,255,255,0)');
+          g.addColorStop(0.5, 'rgba(255,255,255,0.2)');
+          g.addColorStop(1, 'rgba(255,255,255,0)');
+          ctx.save();
+          ctx.beginPath();
+          ctx.rect(pr.x, pr.y, pr.w, pr.h);
+          ctx.clip();
+          ctx.globalCompositeOperation = 'lighter';
+          ctx.fillStyle = g;
+          ctx.fillRect(pr.x, pr.y, pr.w, pr.h);
+          ctx.restore();
+        }
+      }
     }
 
     // Тексты
@@ -405,18 +636,28 @@
     intro.classList.remove('show', 'hide');
     outro.classList.remove('show');
     introShown = outroShown = false;
+    burstSpawned = false;
+    hearts.length = 0;
+    shooters.length = 0;
+    heartTimer = 0;
+    shooterTimer = 3;
     ctx.globalCompositeOperation = 'source-over';
     ctx.fillStyle = '#050712';
     ctx.fillRect(0, 0, W, H);
     startTime = performance.now();
   }
 
+  splitCaption();
   replayBtn.addEventListener('click', restart);
 
   // Курсор / палец
   const setPointer = e => { pointer.x = e.clientX; pointer.y = e.clientY; pointer.active = true; };
   window.addEventListener('pointermove', setPointer, { passive: true });
-  window.addEventListener('pointerdown', setPointer, { passive: true });
+  window.addEventListener('pointerdown', e => {
+    setPointer(e);
+    // Тап или клик — маленький фонтан сердечек
+    if (!reduceMotion && e.target === canvas) spawnHeartBurst(e.clientX, e.clientY, 8);
+  }, { passive: true });
   window.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') pointer.active = false; });
   window.addEventListener('pointerleave', () => { pointer.active = false; });
   document.addEventListener('mouseleave', () => { pointer.active = false; });
