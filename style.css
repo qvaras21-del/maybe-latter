@@ -142,3 +142,72 @@ html, body {
   .intro h1 { animation: none; }
   .caption .w span { transition-duration: .01s; transition-delay: 0s !important; }
 }
+
+/* ===== Дополнения ===== */
+
+/* Медленное северное сияние за всей сценой */
+.bg::before {
+  content: "";
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 140vmax; height: 140vmax;
+  margin: -70vmax 0 0 -70vmax;
+  background: conic-gradient(from 0deg,
+    rgba(37, 99, 235, 0) 0deg,
+    rgba(96, 165, 250, .16) 70deg,
+    rgba(37, 99, 235, 0) 140deg,
+    rgba(249, 168, 212, .10) 220deg,
+    rgba(37, 99, 235, 0) 300deg,
+    rgba(37, 99, 235, 0) 360deg);
+  filter: blur(60px);
+  animation: aurora 70s linear infinite;
+}
+@keyframes aurora { to { transform: rotate(360deg); } }
+
+/* Виньетка: затемняет края и собирает взгляд в центре */
+.bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(5, 7, 18, .75) 100%);
+}
+
+/* Подпись: мягкое розово-голубое свечение, которое дышит */
+.caption { animation: glow 5s ease-in-out infinite; }
+@keyframes glow {
+  0%, 100% { text-shadow: 0 2px 20px rgba(5, 7, 18, .9), 0 0 24px rgba(96, 165, 250, .45); }
+  50%      { text-shadow: 0 2px 20px rgba(5, 7, 18, .9), 0 0 34px rgba(249, 168, 212, .6); }
+}
+
+/* Маленькое сердечко над подписью */
+.outro::before {
+  content: "♥";
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--rose);
+  filter: drop-shadow(0 0 10px rgba(249, 168, 212, .8));
+  animation: pulse 1.05s ease-in-out infinite;
+}
+@keyframes pulse {
+  0%, 100% { transform: scale(1); }
+  15%      { transform: scale(1.3); }
+  32%      { transform: scale(1.1); }
+}
+
+/* Кнопка: лёгкий блик при наведении */
+.replay { position: relative; overflow: hidden; }
+.replay::after {
+  content: "";
+  position: absolute;
+  top: 0; bottom: 0; left: -60%;
+  width: 40%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, .28), transparent);
+  transform: skewX(-20deg);
+  transition: left .7s ease;
+}
+.replay:hover::after { left: 130%; }
+
+@media (prefers-reduced-motion: reduce) {
+  .bg::before, .caption, .outro::before { animation: none; }
+  .replay::after { transition: none; }
+}
