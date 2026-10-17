@@ -38,6 +38,7 @@
   const HALO_PAD = 80;
   let heartTimer = 0, shooterTimer = 3, burstSpawned = false;
   let lastNow = 0;
+  let active = false, ready = false, wantStart = false; // шоу ждёт команды Show.start()
 
   // Новое: искры за курсором, огоньки по рамке, вспышка при проявлении фото
   const sparks = [];
@@ -534,7 +535,9 @@
   function frame(now) {
     const dt = Math.min(0.05, Math.max(0, (now - lastNow) / 1000));
     lastNow = now;
-    const t = reduceMotion ? T_FADE + 3 : (now - startTime) / 1000;
+    const idle = !active;            // до старта рисуем только атмосферу
+    const ta = now / 1000;           // «живое» время для фона
+    const t = idle ? 0 : (reduceMotion ? T_FADE + 3 : (now - startTime) / 1000);
     const settled = t > T_GATHER + 0.5;
 
     // Шлейф: полупрозрачная заливка вместо полной очистки
@@ -558,12 +561,12 @@
     ctx.globalCompositeOperation = 'lighter';
     for (let i = 0; i < stars.length; i++) {
       const s = stars[i];
-      const y = (s.y - t * s.vy + H * 10) % H;
-      const al = 0.12 + 0.28 * (0.5 + 0.5 * Math.sin(t * s.sp + s.ph));
+      const y = (s.y - ta * s.vy + H * 10) % H;
+      const al = 0.12 + 0.28 * (0.5 + 0.5 * Math.sin(ta * s.sp + s.ph));
       ctx.fillStyle = `rgba(191,219,254,${al})`;
       ctx.fillRect(s.x, y, s.r, s.r);
       if (s.flare && !reduceMotion) {
-        const f = Math.pow(0.5 + 0.5 * Math.sin(t * s.sp * 1.3 + s.ph), 3);
+        const f = Math.pow(0.5 + 0.5 * Math.sin(ta * s.sp * 1.3 + s.ph), 3);
         drawStar(s.x, y, 3 + 9 * f, `rgba(219,234,254,${0.15 + 0.5 * f})`);
       }
     }
@@ -572,8 +575,8 @@
       // Большие мягкие огни (боке)
       for (let i = 0; i < orbs.length; i++) {
         const b = orbs[i];
-        const bx = b.x + Math.sin(t * b.sp + b.ph) * 50;
-        const by = b.y + Math.cos(t * b.sp * 0.8 + b.ph) * 40;
+        const bx = b.x + Math.sin(ta * b.sp + b.ph) * 50;
+        const by = b.y + Math.cos(ta * b.sp * 0.8 + b.ph) * 40;
         const g = ctx.createRadialGradient(bx, by, 0, bx, by, b.r);
         g.addColorStop(0, `rgba(${b.rgb},${b.a})`);
         g.addColorStop(1, `rgba(${b.rgb},0)`);
@@ -584,11 +587,11 @@
       // Сердечки плывут снизу вверх, пока сердце бьётся и после превращения
       heartTimer -= dt;
       if (heartTimer <= 0) {
-        if ((t > T_FORM + 0.5 && t < T_BURST) || t > T_GATHER) {
+        if (idle || (t > T_FORM + 0.5 && t < T_BURST) || t > T_GATHER) {
           const vy = -(32 + Math.random() * 40);
           spawnHeart(Math.random() * W, H + 20, 0, vy, 6 + Math.random() * 11, (H + 40) / -vy, false);
         }
-        heartTimer = t < T_BURST ? 0.35 : 0.6;
+        heartTimer = idle ? 0.9 : (t < T_BURST ? 0.35 : 0.6);
       }
       // Взрыв сердечек в момент распада
       if (t >= T_BURST && !burstSpawned) {
@@ -640,7 +643,7 @@
 
     // Светящиеся частицы пока они синие, обычные — когда становятся фото
     ctx.globalCompositeOperation = t < T_GATHER ? 'lighter' : 'source-over';
-    for (let i = 0; i < particles.length; i++) {
+    for (let i = 0; i < (idle ? 0 : particles.length); i++) {
       const p = particles[i];
       place(p, t, o);
       ctx.fillStyle = `rgba(${o.rgb[0] | 0},${o.rgb[1] | 0},${o.rgb[2] | 0},${o.a})`;
@@ -748,7 +751,7 @@
     // Тексты
     if (!introShown && t > T_FORM - 0.8) { intro.classList.add('show'); introShown = true; }
     if (t > T_BURST + 0.2) intro.classList.add('hide');
-    if (!outroShown && t > T_FADE - 0.5) { outro.classList.add('show'); outroShown = true; }
+    if (!outroShown && t > T_FADE - 0.5) { outro.classList.add('show'); outroShown = true; document.dispatchEvent(new Event('show:outro')); }
 
     requestAnimationFrame(frame);
   }
@@ -769,6 +772,7 @@
     ctx.fillStyle = '#050712';
     ctx.fillRect(0, 0, W, H);
     startTime = performance.now();
+    document.dispatchEvent(new Event('show:start'));
   }
 
   splitCaption();
@@ -786,7 +790,7 @@
   window.addEventListener('pointerdown', e => {
     setPointer(e);
     // Тап или клик — маленький фонтан сердечек
-    if (!reduceMotion && e.target === canvas) spawnHeartBurst(e.clientX, e.clientY, 8);
+    if (!reduceMotion && !e.target.closest('button, [role=button], .secret-card, .letter')) spawnHeartBurst(e.clientX, e.clientY, 8);
   }, { passive: true });
   window.addEventListener('pointerup', e => { if (e.pointerType !== 'mouse') pointer.active = false; });
   window.addEventListener('pointerleave', () => { pointer.active = false; });
@@ -806,10 +810,19 @@
       ])
     : Promise.resolve();
 
+  // Внешний пульт: app.js вызывает Show.start(), когда пора показывать сердце
+  window.Show = {
+    start() {
+      wantStart = true;
+      if (ready) { active = true; restart(); }
+    }
+  };
+
   Promise.all([loadPhoto(), fontReady]).then(([img]) => {
     photo = img;
     build();
-    startTime = performance.now();
+    ready = true;
     requestAnimationFrame(frame);
+    if (wantStart) { active = true; restart(); }
   });
 })();
